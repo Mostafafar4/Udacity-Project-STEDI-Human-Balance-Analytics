@@ -4,64 +4,66 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
-from awsglue import DynamicFrame
+from awsgluedq.transforms import EvaluateDataQuality
+from awsglue.dynamicframe import DynamicFrame
 
-
-def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
-    for alias, frame in mapping.items():
-        frame.toDF().createOrReplaceTempView(alias)
-    result = spark.sql(query)
-    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
-
-
-args = getResolvedOptions(sys.argv, ["JOB_NAME"])
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
-job.init(args["JOB_NAME"], args)
+job.init(args['JOB_NAME'], args)
 
-# Script generated for node customer curated
-customercurated_node1706746043280 = glueContext.create_dynamic_frame.from_catalog(
-    database="mostafa-database2",
-    table_name="customer_curated",
-    transformation_ctx="customercurated_node1706746043280",
-)
-
-# Script generated for node step trainer landing
-steptrainerlanding_node1706746069174 = glueContext.create_dynamic_frame.from_catalog(
-    database="mostafa-database2",
-    table_name="step_trainer_landing",
-    transformation_ctx="steptrainerlanding_node1706746069174",
-)
-
-# Script generated for node join & drop duplicates
-SqlQuery557 = """
-SELECT DISTINCT t2.*
-FROM customer_curated t1 
-JOIN step_trainer_landing t2 
-ON t1.serialnumber = t2.serialnumber;
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """
+    Rules = [
+        ColumnCount > 0
+    ]
 """
-joindropduplicates_node1706746139238 = sparkSqlQuery(
-    glueContext,
-    query=SqlQuery557,
-    mapping={
-        "customer_curated": customercurated_node1706746043280,
-        "step_trainer_landing": steptrainerlanding_node1706746069174,
-    },
-    transformation_ctx="joindropduplicates_node1706746139238",
-)
 
-# Script generated for node step trainer trusted
-steptrainertrusted_node1706778727418 = glueContext.write_dynamic_frame.from_options(
-    frame=joindropduplicates_node1706746139238,
-    connection_type="s3",
-    format="json",
-    connection_options={
-        "path": "s3://stedi-lake-house-mostafa/step_trainer/trusted/",
-        "partitionKeys": [],
-    },
-    transformation_ctx="steptrainertrusted_node1706778727418",
-)
+# Script generated for node Amazon S3
+AmazonS3_node1748167555029 = glueContext.create_dynamic_frame.from_options(format_options={"multiLine": "false"}, 
+                                                                           connection_type="s3", format="json", connection_options=
+                                                                           {"paths": ["s3://stedi-lake-house-mostafa/customer/curated/"], "recurse": True},
+                                                                           transformation_ctx="AmazonS3_node1748167555029")
 
+# Script generated for node Amazon S3
+AmazonS3_node1748167807468 = glueContext.create_dynamic_frame.from_options(
+    format_options={"multiLine": "false"}, connection_type="s3", format="json", connection_options=
+    {"paths": ["s3://stedi-lake-house-mostafa/step_trainer/landing/"], "recurse": True},
+    transformation_ctx="AmazonS3_node1748167807468")
+
+# Script generated for node Join
+AmazonS3_node1748167555029DF = AmazonS3_node1748167555029.toDF()
+AmazonS3_node1748167807468DF = AmazonS3_node1748167807468.toDF()
+Join_node1748169349579 = DynamicFrame.fromDF(AmazonS3_node1748167555029DF.join(AmazonS3_node1748167807468DF,
+                                                                               (AmazonS3_node1748167555029DF['serialnumber'] 
+                                                                                == AmazonS3_node1748167807468DF['serialnumber'])
+                                                                               , "outer"), glueContext, "Join_node1748169349579")
+
+# Script generated for node Drop Fields
+DropFields_node1748169618129 = DropFields.apply(frame=Join_node1748169349579, paths=
+                                                ["`.serialnumber`",
+                                                 "sharewithfriendsasofdate",
+                                                 "sharewithpublicasofdate",
+                                                 "sharewithresearchasofdate", 
+                                                 "lastupdatedate",
+                                                 "registrationdate",
+                                                 "birthday",
+                                                 "phone", 
+                                                 "customername",
+                                                 "email", 
+                                                 "serialnumber"],
+                                                transformation_ctx="DropFields_node1748169618129")
+
+# Script generated for node Amazon S3
+EvaluateDataQuality().process_rows(frame=DropFields_node1748169618129, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options=
+                                   {"dataQualityEvaluationContext": "EvaluateDataQuality_node1748167549741", "enableDataQualityResultsPublishing": True}
+                                   , additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+AmazonS3_node1748167623858 = glueContext.getSink(path="s3://stedi-lake-house-mostafa/step_trainer/trusted/", 
+                                                 connection_type="s3", updateBehavior="UPDATE_IN_DATABASE", 
+                                                 partitionKeys=[], enableUpdateCatalog=True, transformation_ctx="AmazonS3_node1748167623858")
+AmazonS3_node1748167623858.setCatalogInfo(catalogDatabase="mostafa-database2",catalogTableName="step_trainer_trusted")
+AmazonS3_node1748167623858.setFormat("json")
+AmazonS3_node1748167623858.writeFrame(DropFields_node1748169618129)
 job.commit()
