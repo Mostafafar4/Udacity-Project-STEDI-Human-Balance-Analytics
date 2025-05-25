@@ -4,53 +4,40 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
-from awsglue import DynamicFrame
+from awsgluedq.transforms import EvaluateDataQuality
+import re
 
-
-def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
-    for alias, frame in mapping.items():
-        frame.toDF().createOrReplaceTempView(alias)
-    result = spark.sql(query)
-    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
-
-
-args = getResolvedOptions(sys.argv, ["JOB_NAME"])
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
-job.init(args["JOB_NAME"], args)
+job.init(args['JOB_NAME'], args)
 
-# Script generated for node customer landing
-customerlanding_node1706119853232 = glueContext.create_dynamic_frame.from_catalog(
-    database="mostafa-database2",
-    table_name="customer_landing",
-    transformation_ctx="customerlanding_node1706119853232",
-)
-
-# Script generated for node privacy filter
-SqlQuery2814 = """
-SELECT *
-FROM customer_landing
-WHERE sharewithresearchasofdate IS NOT NULL;
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """
+    Rules = [
+        ColumnCount > 0
+    ]
 """
-privacyfilter_node1705997052437 = sparkSqlQuery(
-    glueContext,
-    query=SqlQuery2814,
-    mapping={"customer_landing": customerlanding_node1706119853232},
-    transformation_ctx="privacyfilter_node1705997052437",
-)
 
-# Script generated for node customer trusted
-customertrusted_node1705998330821 = glueContext.write_dynamic_frame.from_options(
-    frame=privacyfilter_node1705997052437,
-    connection_type="s3",
-    format="json",
-    connection_options={
-        "path": "s3://stedi-lake-house-mostafa/customer/trusted/",
-        "partitionKeys": [],
-    },
-    transformation_ctx="customertrusted_node1705998330821",
-)
+# Script generated for node Amazon S3
+AmazonS3_node1748167555029 = glueContext.create_dynamic_frame.from_options
+(format_options={"multiLine": "false"}, connection_type="s3", format="json", connection_options=
+{"paths": ["s3://stedi-lake-house-mostafa/customer/landing/"], "recurse": True},
+transformation_ctx="AmazonS3_node1748167555029")
 
+# Script generated for node Filter
+Filter_node1748167605490 = Filter.apply(frame=AmazonS3_node1748167555029, f=lambda row: (not(row["shareWithResearchAsOfDate"] == 0)), transformation_ctx="Filter_node1748167605490")
+
+# Script generated for node Amazon S3
+EvaluateDataQuality().process_rows(frame=Filter_node1748167605490, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options=
+                                   {"dataQualityEvaluationContext": "EvaluateDataQuality_node1748167549741", "enableDataQualityResultsPublishing": True},
+                                   additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+AmazonS3_node1748167623858 = glueContext.getSink(path="s3://stedi-lake-house-mostafa/customer/trusted/",
+                                                 connection_type="s3", updateBehavior="UPDATE_IN_DATABASE",
+                                                 partitionKeys=[], enableUpdateCatalog=True, transformation_ctx="AmazonS3_node1748167623858")
+AmazonS3_node1748167623858.setCatalogInfo(catalogDatabase="mostafa-database2",catalogTableName="customer_trusted")
+AmazonS3_node1748167623858.setFormat("json")
+AmazonS3_node1748167623858.writeFrame(Filter_node1748167605490)
 job.commit()
