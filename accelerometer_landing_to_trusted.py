@@ -4,87 +4,44 @@ from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
-from awsglue import DynamicFrame
+from awsgluedq.transforms import EvaluateDataQuality
 
-
-def sparkSqlQuery(glueContext, query, mapping, transformation_ctx) -> DynamicFrame:
-    for alias, frame in mapping.items():
-        frame.toDF().createOrReplaceTempView(alias)
-    result = spark.sql(query)
-    return DynamicFrame.fromDF(result, glueContext, transformation_ctx)
-
-
-args = getResolvedOptions(sys.argv, ["JOB_NAME"])
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
-job.init(args["JOB_NAME"], args)
+job.init(args['JOB_NAME'], args)
 
-# Script generated for node customer trusted
-customertrusted_node1706121701938 = glueContext.create_dynamic_frame.from_catalog(
-    database="mostafa-database2",
-    table_name="customer_trusted",
-    transformation_ctx="customertrusted_node1706121701938",
-)
-
-# Script generated for node accelerometer landing
-accelerometerlanding_node1706121852675 = glueContext.create_dynamic_frame.from_catalog(
-    database="stedi-lake",
-    table_name="accelerometer_landing",
-    transformation_ctx="accelerometerlanding_node1706121852675",
-)
-
-# Script generated for node join
-SqlQuery409 = """
-SELECT
-t1.*,
-t2.*
-FROM
-customer_trusted t1
-INNER JOIN
-accelerometer_landing t2
-ON
-t1.email = t2.user;
+# Default ruleset used by all target nodes with data quality enabled
+DEFAULT_DATA_QUALITY_RULESET = """
+    Rules = [
+        ColumnCount > 0
+    ]
 """
-join_node1706122139032 = sparkSqlQuery(
-    glueContext,
-    query=SqlQuery409,
-    mapping={
-        "customer_trusted": customertrusted_node1706121701938,
-        "accelerometer_landing": accelerometerlanding_node1706121852675,
-    },
-    transformation_ctx="join_node1706122139032",
-)
 
-# Script generated for node drop fields
-dropfields_node1706134231903 = DropFields.apply(
-    frame=join_node1706122139032,
-    paths=[
-        "customerName",
-        "email",
-        "phone",
-        "birthDay",
-        "serialNumber",
-        "registrationDate",
-        "lastUpdateDate",
-        "shareWithResearchAsOfDate",
-        "shareWithPublicAsOfDate",
-        "shareWithFriendsAsOfDate",
-    ],
-    transformation_ctx="dropfields_node1706134231903",
-)
+# Script generated for node Amazon S3
+AmazonS3_node1748167555029 = glueContext.create_dynamic_frame.from_options(format_options=
+                                                                           {"multiLine": "false"}, connection_type="s3", format="json", connection_options=
+                                                                           {"paths": ["s3://stedi-lake-house-mostafa/customer/trusted/"], "recurse": True},
+                                                                           transformation_ctx="AmazonS3_node1748167555029")
 
-# Script generated for node accelerometer trusted
-accelerometertrusted_node1706131141174 = glueContext.write_dynamic_frame.from_options(
-    frame=dropfields_node1706134231903,
-    connection_type="s3",
-    format="json",
-    connection_options={
-        "path": "s3://stedi-lake-house-mostafa/accelerometer/trusted/",
-        "partitionKeys": [],
-    },
-    transformation_ctx="accelerometertrusted_node1706131141174",
-)
+# Script generated for node Amazon S3
+AmazonS3_node1748167807468 = glueContext.create_dynamic_frame.from_options(format_options=
+                                                                           {"multiLine": "false"}, connection_type="s3", format="json", connection_options=
+                                                                           {"paths": ["s3://stedi-lake-house-mostafa/accelerometer/landing/"], "recurse": True},
+                                                                           transformation_ctx="AmazonS3_node1748167807468")
 
-job.commit()
+# Script generated for node Join
+Join_node1748167871519 = Join.apply(frame1=AmazonS3_node1748167807468, frame2=AmazonS3_node1748167555029, keys1=["user"], keys2=["email"], transformation_ctx="Join_node1748167871519")
+
+# Script generated for node Amazon S3
+EvaluateDataQuality().process_rows(frame=Join_node1748167871519, ruleset=DEFAULT_DATA_QUALITY_RULESET, publishing_options=
+                                   {"dataQualityEvaluationContext": "EvaluateDataQuality_node1748167549741", "enableDataQualityResultsPublishing": True},
+                                   additional_options={"dataQualityResultsPublishing.strategy": "BEST_EFFORT", "observations.scope": "ALL"})
+AmazonS3_node1748167623858 = glueContext.getSink(path="s3://stedi-lake-house-mostafa/accelerometer/trusted/", connection_type="s3",
+                                                 updateBehavior="UPDATE_IN_DATABASE", partitionKeys=[], enableUpdateCatalog=True,
+                                                 transformation_ctx="AmazonS3_node1748167623858")
+AmazonS3_node1748167623858.setCatalogInfo(catalogDatabase="mostafa-database2",catalogTableName="accelerometer_trusted")
+AmazonS3_node1748167623858.setFormat("json")
+AmazonS3_node1748167623858.writeFrame(Join_node1748167871519)
